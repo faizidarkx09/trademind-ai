@@ -28,6 +28,10 @@ export const AgentsView: React.FC<AgentsViewProps> = () => {
   const { agents } = useTrading();
   const [inspectingAgent, setInspectingAgent] = useState<AIAgent | null>(null);
 
+  // Live counts — computed from agent state, never hard-coded.
+  const onlineCount = agents.filter((a) => a.status === 'ONLINE' || a.status === 'LOCKED').length;
+  const newsAgent = agents.find((a) => a.id === 'news');
+
   // Agent Icon mapping
   const getAgentIcon = (id: string) => {
     switch (id) {
@@ -70,7 +74,7 @@ export const AgentsView: React.FC<AgentsViewProps> = () => {
         <div className="flex items-center gap-3 text-xs font-mono">
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#111A27] border border-[#223044]">
             <span className="w-2 h-2 rounded-full bg-[#20D99A]"></span>
-            <span className="text-[#F4F7FB]">9/10 Active</span>
+            <span className="text-[#F4F7FB]">{onlineCount}/10 Active</span>
           </div>
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#111A27] border border-[#223044]">
             <Lock className="w-3.5 h-3.5 text-[#18D5C0]" />
@@ -81,7 +85,7 @@ export const AgentsView: React.FC<AgentsViewProps> = () => {
 
       {/* Special Highlights: Bull vs Bear Debate & News VETO Guard */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* News Agent VETO Highlight */}
+        {/* News Agent VETO Highlight — driven by the live news agent state */}
         <div className="p-4 bg-[#111A27] border border-[#223044] rounded-xl flex items-start gap-3">
           <div className="p-2.5 rounded-lg bg-[#FF5C70]/10 border border-[#FF5C70]/30 text-[#FF5C70] shrink-0">
             <ShieldAlert className="w-5 h-5" />
@@ -89,14 +93,19 @@ export const AgentsView: React.FC<AgentsViewProps> = () => {
           <div className="flex-1 text-xs">
             <div className="flex items-center justify-between">
               <span className="font-bold text-[#F4F7FB]">News Agent Active VETO Protocol</span>
-              <span className="px-2 py-0.5 rounded bg-[#FF5C70] text-[#080D16] font-bold text-[10px]">
-                VETO TRIGGERED
+              <span
+                className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                  newsAgent?.isVetoActive
+                    ? 'bg-[#FF5C70] text-[#080D16]'
+                    : 'bg-[#20D99A]/15 text-[#20D99A]'
+                }`}
+              >
+                {newsAgent?.isVetoActive ? 'VETO TRIGGERED' : 'NO VETO'}
               </span>
             </div>
             <p className="text-[#91A0B5] mt-1 leading-relaxed">
-              When high-impact regulatory announcements, mainnet maintenance, or macro surprises occur,
-              the News Agent issues a hard VETO, immediately blocking paper execution and issuing a
-              protective WAIT signal (currently active on Solana).
+              {newsAgent?.currentConclusion ??
+                'News feed pending — no headlines scanned yet.'}
             </p>
           </div>
         </div>

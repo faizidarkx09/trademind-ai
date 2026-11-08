@@ -45,6 +45,12 @@ import {
   LIVE_CRYPTO_SYMBOLS,
 } from '../data/liveMarketData';
 import { buildLiveSignal } from '../data/indicators';
+import {
+  applyLiveAnalysis,
+  buildAgentStates,
+  runAllLiveAnalysis,
+  type LiveAnalysis,
+} from '../data/liveAnalysis';
 
 const STARTING_BALANCE = 100000;
 const STORAGE_KEY = 'trademind-paper-v1';
@@ -109,6 +115,10 @@ export interface TradingContextValue {
   assets: Asset[];
   signals: Signal[];
   agents: AIAgent[];
+  /** Live analysis per crypto symbol (BTC/ETH/SOL), computed from real
+   *  candles + market context + headlines. Empty until the first live
+   *  run completes — views must show "pending", never preset numbers. */
+  liveAnalysis: Record<string, LiveAnalysis>;
   strategies: Strategy[];
   toggleFavoriteStrategy: (id: string) => void;
   virtualBalance: number;
@@ -162,7 +172,8 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [assets, setAssets] = useState<Asset[]>(mockAssets);
   const [selectedAsset, setSelectedAssetState] = useState<Asset>(mockAssets[0]);
   const [signals, setSignals] = useState<Signal[]>(mockSignals);
-  const [agents] = useState<AIAgent[]>(mockAgents);
+  const [agents, setAgents] = useState<AIAgent[]>(mockAgents);
+  const [liveAnalysis, setLiveAnalysis] = useState<Record<string, LiveAnalysis>>({});
   const [strategies, setStrategies] = useState<Strategy[]>(mockStrategies);
   const [virtualBalance, setVirtualBalance] = useState<number>(
     persisted?.virtualBalance ?? STARTING_BALANCE,
@@ -279,8 +290,37 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         );
       }
     };
-    loadLiveCrypto();
-    const refreshId = setInterval(loadLiveCrypto, 5 * 60 * 1000);
+    // Live analysis pass: real chart + market + news per crypto asset.
+    // Runs AFTER buildLiveSignal so the analysis decision (not the old
+    // 70-gate alone) is authoritative for direction/confidence, and so
+    // every agent vote is replaced with a computed one. Levels
+    // (entry/SL/TP) stay as computed by the indicator engine.
+    const runAnalysis = async () => {
+      const analyses = await runAllLiveAnalysis();
+      if (cancelled || analyses.length === 0) return;
+      setLiveAnalysis((prev) => {
+        const next = { ...prev };
+        analyses.forEach((a) => {
+          next[a.symbol] = a;
+        });
+        return next;
+      });
+      setAgents((prev) => buildAgentStates(prev, analyses));
+      setSignals((prev) =>
+        prev.map((s) => {
+          const a = analyses.find((x) => x.symbol === s.assetSymbol);
+          return a ? applyLiveAnalysis(s, a) : s;
+        }),
+      );
+    };
+    loadLiveCrypto().then(() => {
+      if (!cancelled) void runAnalysis();
+    });
+    const refreshId = setInterval(() => {
+      loadLiveCrypto().then(() => {
+        if (!cancelled) void runAnalysis();
+      });
+    }, 5 * 60 * 1000);
     return () => {
       cancelled = true;
       clearInterval(refreshId);
@@ -588,6 +628,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     assets,
     signals,
     agents,
+    liveAnalysis,
     strategies,
     toggleFavoriteStrategy,
     virtualBalance,

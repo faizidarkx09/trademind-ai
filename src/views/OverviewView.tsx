@@ -37,9 +37,37 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
     setSelectedAsset,
     signals,
     agents,
+    liveAnalysis,
     setActiveTab,
     openExecutionModal,
   } = useTrading();
+
+  // Live analysis board (BTC/ETH/SOL) — real values only. Until the first
+  // live run completes, every field shows "pending", never a preset number.
+  const liveList = Object.values(liveAnalysis);
+  const liveReady = liveList.length > 0;
+  const fearGreedValue = liveReady ? liveList[0].fearGreed : null;
+  const fearGreedLabel =
+    fearGreedValue === null
+      ? 'Pending…'
+      : fearGreedValue >= 75
+        ? 'Extreme Greed'
+        : fearGreedValue >= 55
+          ? 'Greed'
+          : fearGreedValue >= 45
+            ? 'Neutral'
+            : fearGreedValue >= 25
+              ? 'Fear'
+              : 'Extreme Fear';
+  const buyCount = liveList.filter((a) => a.decision === 'BUY').length;
+  const sellCount = liveList.filter((a) => a.decision === 'SELL').length;
+  const waitCount = liveList.filter((a) => a.decision === 'WAIT').length;
+  const longBiasPct =
+    liveReady && buyCount + sellCount > 0
+      ? Math.round((buyCount / (buyCount + sellCount)) * 100)
+      : null;
+  const vetoAssets = liveList.filter((a) => a.veto).map((a) => a.symbol);
+  const btc24h = liveList.find((a) => a.symbol === 'BTC')?.chart.change24h ?? null;
 
   // Top metric computations
   const totalRealizedPnL = closedTrades.reduce((acc, t) => acc + t.realizedPnL, 0);
@@ -246,45 +274,84 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               <div>
                 <div className="flex justify-between text-[#91A0B5] mb-1">
                   <span>Overall Market Sentiment</span>
-                  <span className="text-[#20D99A] font-semibold">Moderate Greed (68/100)</span>
+                  <span className="text-[#20D99A] font-semibold">
+                    {fearGreedValue === null
+                      ? 'Live analysis pending…'
+                      : `${fearGreedLabel} (${fearGreedValue}/100)`}
+                  </span>
                 </div>
                 <div className="w-full h-1.5 bg-[#080D16] rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-[#18D5C0] to-[#20D99A] w-[68%]" />
+                  <div
+                    className="h-full bg-gradient-to-r from-[#18D5C0] to-[#20D99A]"
+                    style={{ width: `${fearGreedValue ?? 0}%` }}
+                  />
+                </div>
+                <div className="text-[10px] text-[#64748B] mt-1">
+                  Crypto Fear &amp; Greed Index (alternative.me, live)
                 </div>
               </div>
 
               <div>
                 <div className="flex justify-between text-[#91A0B5] mb-1">
                   <span>Bull vs Bear Consensus</span>
-                  <span className="text-[#18D5C0] font-semibold font-mono">72% Long Bias</span>
+                  <span className="text-[#18D5C0] font-semibold font-mono">
+                    {longBiasPct === null ? 'Pending…' : `${longBiasPct}% Long Bias`}
+                  </span>
                 </div>
                 <div className="w-full h-1.5 bg-[#080D16] rounded-full overflow-hidden flex">
-                  <div className="h-full bg-[#20D99A] w-[72%]" />
-                  <div className="h-full bg-[#FF5C70] w-[28%]" />
+                  <div className="h-full bg-[#20D99A]" style={{ width: `${longBiasPct ?? 0}%` }} />
+                  <div className="h-full bg-[#FF5C70]" style={{ width: `${longBiasPct === null ? 0 : 100 - longBiasPct}%` }} />
                 </div>
                 <div className="flex justify-between text-[10px] text-[#64748B] mt-1 font-mono">
-                  <span>Bull: 72%</span>
-                  <span>Bear: 28%</span>
+                  <span>Bull: {buyCount}</span>
+                  <span>Wait: {waitCount}</span>
+                  <span>Bear: {sellCount}</span>
                 </div>
               </div>
 
               <div className="p-2.5 rounded-lg bg-[#0D1420] border border-[#223044] flex items-center justify-between">
                 <div>
                   <div className="text-[11px] font-medium text-[#F4F7FB]">News Risk Guard</div>
-                  <div className="text-[10px] text-[#64748B]">Active Veto on SOL/USDT</div>
+                  <div className="text-[10px] text-[#64748B]">
+                    {!liveReady
+                      ? 'Live analysis pending…'
+                      : vetoAssets.length > 0
+                        ? `Active Veto on ${vetoAssets.join(', ')}`
+                        : 'No veto — headlines scanned, no hard-event headline'}
+                  </div>
                 </div>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#FF5C70]/15 text-[#FF5C70] font-bold">
-                  1 VETO ACTIVE
+                <span
+                  className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${
+                    vetoAssets.length > 0
+                      ? 'bg-[#FF5C70]/15 text-[#FF5C70]'
+                      : 'bg-[#20D99A]/15 text-[#20D99A]'
+                  }`}
+                >
+                  {!liveReady
+                    ? 'PENDING'
+                    : vetoAssets.length > 0
+                      ? `${vetoAssets.length} VETO ACTIVE`
+                      : 'CLEAR'}
                 </span>
               </div>
 
               <div className="p-2.5 rounded-lg bg-[#0D1420] border border-[#223044] flex items-center justify-between">
                 <div>
                   <div className="text-[11px] font-medium text-[#F4F7FB]">Macro Regime</div>
-                  <div className="text-[10px] text-[#64748B]">US 10Y: 4.38% · DXY: 104.2</div>
+                  <div className="text-[10px] text-[#64748B]">
+                    {fearGreedValue === null
+                      ? 'Live market context pending…'
+                      : `Fear & Greed ${fearGreedValue} · BTC 24h ${btc24h === null ? 'n/a' : `${btc24h >= 0 ? '+' : ''}${btc24h.toFixed(2)}%`}`}
+                  </div>
                 </div>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#18D5C0]/15 text-[#18D5C0]">
-                  FAVORABLE
+                  {fearGreedValue === null
+                    ? 'PENDING'
+                    : fearGreedValue >= 75
+                      ? 'GREED — CAUTION'
+                      : fearGreedValue <= 25
+                        ? 'FEAR — CONTRARIAN'
+                        : 'NEUTRAL'}
                 </span>
               </div>
             </div>
