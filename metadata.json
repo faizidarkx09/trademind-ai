@@ -1,0 +1,6 @@
+{
+  "name": "TradeMind AI",
+  "description": "Next-generation intelligent trading platform featuring multi-agent market analysis, risk-filtered BUY, SELL, and WAIT signals, interactive candlestick charts, paper trading, and backtesting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
