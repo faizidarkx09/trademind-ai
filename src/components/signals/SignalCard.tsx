@@ -1,6 +1,15 @@
 import React from 'react';
 import type { Signal } from '../../types/trading';
-import { ArrowUpRight, ArrowDownRight, Clock, ShieldAlert, Zap } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowUpRight,
+  Clock,
+  Loader2,
+  ShieldAlert,
+  Sparkles,
+  Zap,
+} from 'lucide-react';
 
 interface SignalCardProps {
   signal: Signal;
@@ -12,6 +21,12 @@ const DECISION_STYLE: Record<Signal['type'], { badge: string; bar: string; label
   SELL: { badge: 'bg-[#FF5C70] text-[#080D16]', bar: 'bg-[#FF5C70]', label: 'SELL' },
   WAIT: { badge: 'bg-[#64748B] text-[#F4F7FB]', bar: 'bg-[#64748B]', label: 'WAIT' },
 };
+
+function formatVerdictTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
 export const SignalCard: React.FC<SignalCardProps> = ({ signal, onInspect }) => {
   const style = DECISION_STYLE[signal.type];
@@ -79,6 +94,87 @@ export const SignalCard: React.FC<SignalCardProps> = ({ signal, onInspect }) => 
           <div className="font-bold text-[#20D99A] mt-0.5">${signal.takeProfit.toLocaleString()}</div>
         </div>
       </div>
+
+      {/* AI Analysis — display-only verdict from POST /api/analyze.
+          Never overwrites the rule decision above; equities (no live
+          analysis) simply show no section until a verdict exists. */}
+      {signal.aiVerdict && (
+        <div className="p-3 rounded-lg bg-[#080D16] border border-[#223044] space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 text-[11px] font-bold text-[#F4F7FB]">
+              <Sparkles className="w-3.5 h-3.5 text-[#18D5C0]" /> AI Analysis
+            </span>
+            {signal.aiVerdict.status === 'ready' && signal.aiVerdict.model ? (
+              <span
+                className="text-[10px] text-[#64748B] font-mono truncate max-w-[60%]"
+                title={signal.aiVerdict.model}
+              >
+                {signal.aiVerdict.model}
+              </span>
+            ) : null}
+          </div>
+
+          {signal.aiVerdict.status === 'loading' ? (
+            <div className="space-y-2">
+              <div className="h-2 w-3/4 rounded bg-[#223044] animate-pulse" />
+              <div className="h-2 w-1/2 rounded bg-[#223044] animate-pulse" />
+              <p className="text-[10px] text-[#64748B] flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" /> Fetching AI verdict…
+              </p>
+            </div>
+          ) : signal.aiVerdict.status === 'unavailable' ? (
+            <div className="space-y-1">
+              <p className="flex items-center gap-1.5 text-[11px] text-[#F5B942] font-semibold">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> AI unavailable — rule-based
+                decision
+              </p>
+              <p className="text-[11px] text-[#91A0B5]">
+                Rule decision:{' '}
+                <span className="font-bold text-[#F4F7FB]">{signal.type}</span>
+                {' · '}
+                {signal.confidence}% confidence
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`px-2 py-0.5 rounded-md text-[11px] font-extrabold ${DECISION_STYLE[signal.aiVerdict.decision].badge}`}
+                >
+                  {DECISION_STYLE[signal.aiVerdict.decision].label}
+                </span>
+                <span className="text-[11px] font-mono font-bold text-[#F4F7FB]">
+                  {signal.aiVerdict.confidence}%
+                </span>
+                <span className="text-[10px] text-[#64748B] ml-auto font-mono">
+                  {formatVerdictTime(signal.aiVerdict.analyzedAt)}
+                </span>
+              </div>
+              {signal.aiVerdict.reasoning ? (
+                <p className="text-[11px] leading-relaxed text-[#C6D2E0] line-clamp-3">
+                  {signal.aiVerdict.reasoning}
+                </p>
+              ) : null}
+              {signal.aiVerdict.keyFactors.length > 0 ? (
+                <ul className="space-y-0.5">
+                  {signal.aiVerdict.keyFactors.map((factor, i) => (
+                    <li key={i} className="flex gap-1.5 text-[11px] text-[#91A0B5]">
+                      <span className="text-[#18D5C0] shrink-0">•</span>
+                      <span>{factor}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {signal.aiVerdict.riskNote ? (
+                <p className="flex gap-1.5 text-[10px] leading-relaxed text-[#F5B942]/90">
+                  <AlertTriangle className="w-3 h-3 shrink-0 mt-px" />
+                  <span>{signal.aiVerdict.riskNote}</span>
+                </p>
+              ) : null}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Footer: votes, R:R, expiry, news risk */}
       <div className="flex items-center justify-between text-[11px] pt-2 border-t border-[#223044]/60">

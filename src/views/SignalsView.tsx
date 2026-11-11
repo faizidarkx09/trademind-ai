@@ -2,7 +2,7 @@ import React from 'react';
 import { useTrading } from '../context/TradingContext';
 import { SignalCard } from '../components/signals/SignalCard';
 import { Signal, SignalDecision } from '../types/trading';
-import { Search, Filter, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Search, Filter, AlertTriangle, ShieldCheck, RefreshCw, Sparkles } from 'lucide-react';
 
 interface SignalsViewProps {
   onInspectSignal: (sig: Signal) => void;
@@ -17,7 +17,15 @@ export const SignalsView: React.FC<SignalsViewProps> = ({ onInspectSignal }) => 
     setSignalSearch,
     assetClassFilter,
     setAssetClassFilter,
+    refreshAllAiVerdicts,
   } = useTrading();
+
+  // AI verdict summary (crypto signals only — equities have no live
+  // analysis, so they carry no verdict).
+  const aiReady = signals.filter((s) => s.aiVerdict?.status === 'ready').length;
+  const aiUnavailable = signals.filter((s) => s.aiVerdict?.status === 'unavailable').length;
+  const aiLoading = signals.filter((s) => s.aiVerdict?.status === 'loading').length;
+  const aiTotal = aiReady + aiUnavailable + aiLoading;
 
   // Filter signals
   const filteredSignals = signals.filter((sig) => {
@@ -57,6 +65,37 @@ export const SignalsView: React.FC<SignalsViewProps> = ({ onInspectSignal }) => 
           <ShieldCheck className="w-4 h-4 text-[#18D5C0] shrink-0" />
           <span>Paper execution only · Signals are not guaranteed profit</span>
         </div>
+      </div>
+
+      {/* AI verdict status strip — 2h cache, respects the free-tier throttle */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-[#111A27] border border-[#223044] rounded-xl">
+        <span className="flex items-center gap-1.5 text-xs text-[#91A0B5]">
+          <Sparkles className="w-3.5 h-3.5 text-[#18D5C0] shrink-0" />
+          <span>
+            AI verdicts:{' '}
+            <span className="font-bold text-[#20D99A]">{aiReady} ready</span>
+            {' · '}
+            <span className="font-bold text-[#F5B942]">{aiUnavailable} unavailable</span>
+            {aiLoading > 0 ? (
+              <>
+                {' · '}
+                <span className="font-bold text-[#F4F7FB]">{aiLoading} loading</span>
+              </>
+            ) : null}
+            {aiTotal === 0 ? (
+              <span className="text-[#64748B]"> — pending first live analysis</span>
+            ) : null}
+          </span>
+          <span className="text-[10px] text-[#64748B]">2h cache · free-tier friendly</span>
+        </span>
+        <button
+          onClick={() => refreshAllAiVerdicts()}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-[#18D5C0] border border-[#18D5C0]/40 rounded-lg hover:bg-[#18D5C0]/10 transition-colors"
+          title="Refresh AI verdicts (2h cache applies — fresh verdicts are skipped)"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          Refresh AI
+        </button>
       </div>
 
       {/* Filter and Search Bar */}

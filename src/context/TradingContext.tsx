@@ -51,9 +51,14 @@ import {
   runAllLiveAnalysis,
   type LiveAnalysis,
 } from '../data/liveAnalysis';
+import { buildAnalyzeRequest, fetchAiVerdict, loadingVerdict } from '../data/aiVerdict';
 
 const STARTING_BALANCE = 100000;
 const STORAGE_KEY = 'trademind-paper-v1';
+/** AI verdict throttle: one /api/analyze call per asset per 2h. The free
+ *  tier allows 50 requests/day — the 5-minute analysis cadence must NEVER
+ *  trigger an AI call (3 assets x 288 runs/day would burn the quota). */
+const AI_VERDICT_TTL_MS = 2 * 60 * 60 * 1000;
 
 interface PersistedState {
   virtualBalance: number;
@@ -119,6 +124,15 @@ export interface TradingContextValue {
    *  candles + market context + headlines. Empty until the first live
    *  run completes — views must show "pending", never preset numbers. */
   liveAnalysis: Record<string, LiveAnalysis>;
+  /**
+   * AI verdicts (POST /api/analyze, key server-side). refreshAiVerdict
+   * fetches one asset's verdict (2h throttle applies — returns false
+   * when the cached verdict is still fresh); refreshAllAiVerdicts does
+   * the same for every crypto asset. The verdict is display-only and
+   * never overwrites the rule decision.
+   */
+  refreshAiVerdict: (symbol: string) => boolean;
+  refreshAllAiVerdicts: () => void;
   strategies: Strategy[];
   toggleFavoriteStrategy: (id: string) => void;
   virtualBalance: number;
@@ -202,6 +216,61 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /* ------------- AI verdicts (POST /api/analyze) ------------- */
+  /* In-memory only (no localStorage): last successful/attempted fetch per
+   * symbol, for the 2h throttle. In-flight guard stops double fetches. */
+  const aiVerdictFetchedAtRef = useRef<Map<string, number>>(new Map());
+  const aiVerdictInFlightRef = useRef<Set<string>>(new Set());
+  /* Latest assets / liveAnalysis for the verdict fetcher, which runs from
+   * the mount effect (stale closures would otherwise see seed data). */
+  const assetsRef = useRef<Asset[]>(assets);
+  const liveAnalysisRef = useRef<Record<string, LiveAnalysis>>({});
+  const runAiVerdictFetchRef = useRef<
+    (symbol: string, analysis: LiveAnalysis) => Promise<void>
+  >(async () => {});
+
+  useEffect(() => {
+    assetsRef.current = assets;
+  }, [assets]);
+  useEffect(() => {
+    liveAnalysisRef.current = liveAnalysis;
+  }, [liveAnalysis]);
+
+  /** Fetch one asset's AI verdict and attach it to its signal. Sets a
+   *  'loading' verdict first, then 'ready' or 'unavailable' (rule
+   *  fallback). Never throws; never touches signal.type / confidence. */
+  const runAiVerdictFetch = useCallback(
+    async (symbol: string, analysis: LiveAnalysis): Promise<void> => {
+      if (aiVerdictInFlightRef.current.has(symbol)) return;
+      const asset = assetsRef.current.find((a) => a.symbol === symbol);
+      if (!asset) return;
+      aiVerdictInFlightRef.current.add(symbol);
+      setSignals((prev) =>
+        prev.map((s) =>
+          s.assetSymbol === symbol
+            ? { ...s, aiVerdict: loadingVerdict(s.type, s.confidence) }
+            : s,
+        ),
+      );
+      try {
+        const verdict = await fetchAiVerdict(buildAnalyzeRequest(symbol, asset, analysis));
+        // Every completed attempt (ready OR unavailable) counts against
+        // the 2h throttle, so a failing backend is not hammered either.
+        aiVerdictFetchedAtRef.current.set(symbol, Date.now());
+        setSignals((prev) =>
+          prev.map((s) => (s.assetSymbol === symbol ? { ...s, aiVerdict: verdict } : s)),
+        );
+      } finally {
+        aiVerdictInFlightRef.current.delete(symbol);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    runAiVerdictFetchRef.current = runAiVerdictFetch;
+  }, [runAiVerdictFetch]);
+
   // Restore favorites from persistence.
   useEffect(() => {
     const favIds = persisted?.favoriteStrategyIds;
@@ -235,6 +304,65 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToastMessage(null), 4500);
   }, []);
+
+  /* Manual AI verdict refresh (button). Respects the same 2h throttle as
+   * the auto-fetch — returns false (with a toast saying when the next
+   * refresh is due) when the cached verdict is still fresh. */
+  const refreshAiVerdict = useCallback(
+    (symbol: string): boolean => {
+      const analysis = liveAnalysisRef.current[symbol];
+      if (!analysis) {
+        showToast(
+          `No live analysis for ${symbol} yet — AI verdict appears after the next analysis run.`,
+          'warning',
+        );
+        return false;
+      }
+      const last = aiVerdictFetchedAtRef.current.get(symbol);
+      if (last !== undefined && Date.now() - last < AI_VERDICT_TTL_MS) {
+        const mins = Math.ceil((AI_VERDICT_TTL_MS - (Date.now() - last)) / 60000);
+        const hours = Math.floor(mins / 60);
+        showToast(
+          `AI verdict for ${symbol} is fresh — next refresh in ~${hours > 0 ? `${hours}h ${mins % 60}m` : `${mins}m`}.`,
+          'info',
+        );
+        return false;
+      }
+      void runAiVerdictFetch(symbol, analysis);
+      return true;
+    },
+    [runAiVerdictFetch, showToast],
+  );
+
+  const refreshAllAiVerdicts = useCallback((): void => {
+    const started: string[] = [];
+    const skippedFresh: string[] = [];
+    for (const symbol of Object.keys(LIVE_CRYPTO_SYMBOLS)) {
+      const analysis = liveAnalysisRef.current[symbol];
+      if (!analysis) continue;
+      const last = aiVerdictFetchedAtRef.current.get(symbol);
+      if (last !== undefined && Date.now() - last < AI_VERDICT_TTL_MS) {
+        skippedFresh.push(symbol);
+        continue;
+      }
+      started.push(symbol);
+      void runAiVerdictFetch(symbol, analysis);
+    }
+    if (started.length > 0) {
+      showToast(`Refreshing AI verdicts for ${started.join(', ')}…`, 'info');
+    } else if (skippedFresh.length > 0) {
+      const soonest = Math.min(
+        ...skippedFresh.map((s) => aiVerdictFetchedAtRef.current.get(s) ?? 0),
+      );
+      const mins = Math.max(
+        1,
+        Math.ceil((AI_VERDICT_TTL_MS - (Date.now() - soonest)) / 60000),
+      );
+      showToast(`All AI verdicts are fresh (2h cache) — next refresh in ~${mins}m.`, 'info');
+    } else {
+      showToast('No live analysis yet — AI verdicts appear after the next analysis run.', 'warning');
+    }
+  }, [runAiVerdictFetch, showToast]);
 
   const appendAuditLog = useCallback((event: string, actor: string, severity: AuditLog['severity']) => {
     setAuditLogs((prev) => [
@@ -312,6 +440,14 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           return a ? applyLiveAnalysis(s, a) : s;
         }),
       );
+      // AI verdicts (frontend): throttled to one call per asset per 2h so
+      // the 50/day free tier is never burned by the 5-minute analysis
+      // cadence. Display-only — never overwrites the rule decision.
+      for (const a of analyses) {
+        const last = aiVerdictFetchedAtRef.current.get(a.symbol);
+        if (last !== undefined && Date.now() - last < AI_VERDICT_TTL_MS) continue;
+        void runAiVerdictFetchRef.current(a.symbol, a);
+      }
     };
     loadLiveCrypto().then(() => {
       if (!cancelled) void runAnalysis();
@@ -629,6 +765,8 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     signals,
     agents,
     liveAnalysis,
+    refreshAiVerdict,
+    refreshAllAiVerdicts,
     strategies,
     toggleFavoriteStrategy,
     virtualBalance,

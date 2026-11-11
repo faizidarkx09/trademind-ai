@@ -97,6 +97,33 @@ export interface Signal {
   newsRiskNote: string;
   /** Feed the signal was computed from; undefined means SIMULATED. */
   dataSource?: DataSource;
+  /**
+   * AI verdict from POST /api/analyze (OpenRouter model, key server-side).
+   * DISPLAY-ONLY: it NEVER overwrites the signal's rule decision
+   * (Signal.type) — it is shown as a separate "AI Analysis" section.
+   * Undefined until the first verdict fetch for this asset.
+   */
+  aiVerdict?: AiVerdict;
+}
+
+/**
+ * AI verdict for one signal. `status` drives the UI:
+ *  - 'loading'     — fetch in flight, show a skeleton, keep rule decision.
+ *  - 'ready'       — real AI answer (source 'ai'), show decision + reasoning.
+ *  - 'unavailable' — any failure (503 not configured / 429 / 502 / network /
+ *    invalid response); decision/confidence fall back to the rule engine so
+ *    the card still shows the rule-based decision.
+ */
+export interface AiVerdict {
+  decision: SignalDecision;
+  confidence: number;
+  reasoning: string;
+  keyFactors: string[];
+  riskNote: string;
+  model: string;
+  source: 'ai' | 'rule';
+  status: 'loading' | 'ready' | 'unavailable';
+  analyzedAt: string;
 }
 
 export interface AIAgent {
